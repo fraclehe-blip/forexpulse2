@@ -1,5 +1,5 @@
 # ============================================================
-# ForexPulse AI Pro - VERSION AVANZADA FUNCIONAL
+# ForexPulse AI Pro - Arquitectura PRO (Cloud-Safe)
 # ============================================================
 
 import streamlit as st
@@ -7,22 +7,12 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime
 import ta
-import random
-from deap import base, creator, tools, algorithms
-
-# TensorFlow opcional
-try:
-    import tensorflow as tf
-    from tensorflow.keras import Sequential
-    from tensorflow.keras.layers import LSTM, Dense
-    TF_AVAILABLE = True
-except:
-    TF_AVAILABLE = False
+import time
+from datetime import datetime
 
 # ================= CONFIG =================
-st.set_page_config(layout="wide", page_title="ForexPulse AI Pro")
+st.set_page_config(page_title="ForexPulse AI Pro", layout="wide")
 
 PAIRS = {
     "EUR/USD": "EURUSD=X",
@@ -42,12 +32,17 @@ TIMEFRAMES = {
 # ================= DATA =================
 @st.cache_data(ttl=60)
 def get_data(symbol, interval, period):
-    df = yf.download(symbol, interval=interval, period=period, progress=False)
-    df.dropna(inplace=True)
-    return df
+    try:
+        df = yf.download(symbol, interval=interval, period=period, progress=False)
+        df.dropna(inplace=True)
+        return df
+    except:
+        return pd.DataFrame()
 
 # ================= INDICATORS =================
 def add_indicators(df):
+    df = df.copy()
+
     df["EMA9"] = ta.trend.ema_indicator(df["Close"], 9)
     df["EMA21"] = ta.trend.ema_indicator(df["Close"], 21)
     df["RSI"] = ta.momentum.rsi(df["Close"], 14)
@@ -66,47 +61,40 @@ def add_indicators(df):
     df.dropna(inplace=True)
     return df
 
-# ================= LSTM =================
-class LSTMModel:
-    def __init__(self):
-        self.model = None
-
-    def train(self, df):
-        if not TF_AVAILABLE:
-            return
-
-        data = df[["Close"]].values
-        X, y = [], []
-
-        for i in range(60, len(data)-1):
-            X.append(data[i-60:i])
-            y.append(int(data[i+1] > data[i]))
-
-        X, y = np.array(X), np.array(y)
-
-        model = Sequential([
-            LSTM(50, return_sequences=True),
-            LSTM(50),
-            Dense(1, activation="sigmoid")
-        ])
-
-        model.compile(optimizer="adam", loss="binary_crossentropy")
-        model.fit(X, y, epochs=5, verbose=0)
-
-        self.model = model
-
-    def predict(self, df):
-        if not TF_AVAILABLE or self.model is None:
-            return 0.5
-
-        data = df[["Close"]].values[-60:]
-        X = np.array([data])
-        return float(self.model.predict(X)[0][0])
-
-# ================= SIGNAL =================
-def generate_signal(df, prob):
+# ================= AI ENGINE (SIMULADO PRO) =================
+def ai_engine(df):
+    """
+    Simula un modelo híbrido (LSTM + indicadores).
+    Sustituible por API externa real.
+    """
     row = df.iloc[-1]
 
+    score = 0.5
+
+    if row["EMA9"] > row["EMA21"]:
+        score += 0.12
+    else:
+        score -= 0.12
+
+    if row["RSI"] < 50:
+        score += 0.06
+    else:
+        score -= 0.06
+
+    if row["MACD_H"] > 0:
+        score += 0.08
+    else:
+        score -= 0.08
+
+    if row["ADX"] > 20:
+        score += 0.05
+
+    prob = float(np.clip(score, 0.05, 0.95))
+    return prob
+
+# ================= SIGNAL ENGINE =================
+def generate_signal(df, prob):
+    row = df.iloc[-1]
     confirms = 0
 
     if row["EMA9"] > row["EMA21"]: confirms += 1
@@ -118,30 +106,24 @@ def generate_signal(df, prob):
         return "BUY", confirms
     elif prob < 0.26 and confirms >= 3:
         return "SELL", confirms
-    return "WAIT", confirms
+    else:
+        return "WAIT", confirms
 
-# ================= GA =================
-def fitness(individual):
-    return (random.random(),)
+# ================= RISK =================
+def risk_management(price, atr, direction, risk_pct=1, capital=10000):
+    risk_amount = capital * risk_pct / 100
 
-def run_ga():
-    creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-    creator.create("Individual", list, fitness=creator.FitnessMax)
+    if direction == "BUY":
+        sl = price - atr * 1.5
+        tp = price + atr * 2.5
+    elif direction == "SELL":
+        sl = price + atr * 1.5
+        tp = price - atr * 2.5
+    else:
+        return 0, 0, 0
 
-    toolbox = base.Toolbox()
-    toolbox.register("attr", random.random)
-    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr, 5)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-
-    toolbox.register("evaluate", fitness)
-    toolbox.register("mate", tools.cxBlend, alpha=0.5)
-    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
-    toolbox.register("select", tools.selTournament, tournsize=3)
-
-    pop = toolbox.population(n=10)
-    algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.2, ngen=5, verbose=False)
-
-    return tools.selBest(pop, 1)[0]
+    position_size = risk_amount / abs(price - sl)
+    return sl, tp, position_size
 
 # ================= UI =================
 st.title("📈 ForexPulse AI Pro")
@@ -153,29 +135,45 @@ symbol = PAIRS[pair]
 interval, period = TIMEFRAMES[tf]
 
 df = get_data(symbol, interval, period)
+
+if df.empty:
+    st.error("Error cargando datos")
+    st.stop()
+
 df = add_indicators(df)
 
-# LSTM
-model = LSTMModel()
-model.train(df)
-prob = model.predict(df)
-
+# ================= AI =================
+prob = ai_engine(df)
 signal, confirms = generate_signal(df, prob)
 
+price = df["Close"].iloc[-1]
+atr = df["ATR"].iloc[-1]
+
+sl, tp, size = risk_management(price, atr, signal)
+
 # ================= DASHBOARD =================
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
-col1.metric("Precio", f"{df['Close'].iloc[-1]:.5f}")
-col2.metric("Prob LSTM", f"{prob*100:.1f}%")
+col1.metric("Precio", f"{price:.5f}")
+col2.metric("Probabilidad AI", f"{prob*100:.1f}%")
 col3.metric("Confirmaciones", confirms)
+col4.metric("ATR", f"{atr:.5f}")
 
-# Señal
+# ================= SIGNAL =================
 if signal == "BUY":
-    st.success(f"🚨 SEÑAL DE COMPRA {pair}")
+    st.success(f"🚨 SEÑAL FUERTE DE COMPRA {pair}")
 elif signal == "SELL":
-    st.error(f"🚨 SEÑAL DE VENTA {pair}")
+    st.error(f"🚨 SEÑAL FUERTE DE VENTA {pair}")
 else:
     st.info("⏸️ SIN SEÑAL")
+
+# ================= RISK =================
+if signal != "WAIT":
+    st.markdown(f"""
+    **SL:** {sl:.5f}  
+    **TP:** {tp:.5f}  
+    **Tamaño posición:** {size:.2f}
+    """)
 
 # ================= CHART =================
 fig = go.Figure()
@@ -185,7 +183,8 @@ fig.add_trace(go.Candlestick(
     open=df["Open"],
     high=df["High"],
     low=df["Low"],
-    close=df["Close"]
+    close=df["Close"],
+    name="Precio"
 ))
 
 fig.add_trace(go.Scatter(x=df.index, y=df["EMA9"], name="EMA9"))
@@ -193,10 +192,10 @@ fig.add_trace(go.Scatter(x=df.index, y=df["EMA21"], name="EMA21"))
 
 st.plotly_chart(fig, use_container_width=True)
 
-# ================= GA =================
-if st.button("Optimizar parámetros (GA)"):
-    best = run_ga()
-    st.write("Mejor individuo:", best)
+# ================= AUTO REFRESH =================
+if st.checkbox("Auto refresh"):
+    time.sleep(30)
+    st.rerun()
 
 # ================= DISCLAIMER =================
 st.warning("""
