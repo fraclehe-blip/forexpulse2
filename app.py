@@ -33,12 +33,28 @@ TIMEFRAMES = {
 @st.cache_data(ttl=60)
 def get_data(symbol, interval, period):
     try:
-        df = yf.download(symbol, interval=interval, period=period, progress=False)
-        df.dropna(inplace=True)
-        return df
-    except:
-        return pd.DataFrame()
+        df = yf.download(
+            tickers=symbol,
+            interval=interval,
+            period=period,
+            progress=False,
+            threads=False
+        )
 
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        df = df.dropna()
+
+        # FIX columnas multiindex ocasional
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        return df
+
+    except Exception as e:
+        st.error(f"Error yfinance: {e}")
+        return pd.DataFrame()
 # ================= INDICATORS =================
 def add_indicators(df):
     df = df.copy()
